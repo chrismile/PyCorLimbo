@@ -6,13 +6,10 @@ from torch.utils.cpp_extension import BuildExtension, CppExtension, IS_WINDOWS, 
 extra_compile_args = []
 if IS_WINDOWS:
     extra_compile_args.append('/std:c++17')
-    extra_compile_args.append('/openmp')
 elif IS_MACOS:
     extra_compile_args.append('-std=c++17')
-    extra_compile_args.append('-fopenmp=libomp')
 else:
     extra_compile_args.append('-std=c++17')
-    extra_compile_args.append('-fopenmp')
 
 class EggInfoInstallLicense(egg_info):
     def run(self):
@@ -28,10 +25,6 @@ setup(
         CppExtension(
             'pycorlimbo',
             [
-                'src/Random/Random.cpp',
-                'src/Random/Xorshift.cpp',
-                'src/Correlation.cpp',
-                'src/MutualInformation.cpp',
                 'src/PyCorLimbo.cpp',
             ],
             libraries=['nlopt'],

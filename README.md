@@ -1,20 +1,35 @@
-# Correlation Metrics for PyTorch
+# PyCorLimbo
 
-This library implements correlation metrics using OpenMP on the CPU and CUDA on the GPU for use in PyTorch.
-
-Currently, the computation of the following correlation metrics is supported.
-- Pearson correlation coefficient.
-- Spearman rank correlation coefficient.
-- Kendall rank correlation coefficient (aka. Kendall's tau).
-- A binned mutual information estimator.
-- The mutual information estimator by Kraskov et al. as introduced in
-> Alexander Kraskov, Harald Stögbauer, and Peter Grassberger: Estimating mutual information.
-Phys. Rev. E, 69:066138, June 2004, https://journals.aps.org/pre/abstract/10.1103/PhysRevE.69.066138
+This library implements Bayesian optimal sampling for correlation fields in Python via the C++ library
+[Limbo](https://github.com/resibots/limbo). It is recommended to use this library in conjunction with
+[PyCoriander](https://github.com/chrismile/PyCoriander), which implements the evaluation of different correlation
+metrics. Both libraries have a Python interface relying on PyTorch.
 
 
 ## Install with setuptools
 
-To install the library as a Python module, the following command must be called in the library directory.
+A prerequisites for installing this library is installing [PyTorch](https://pytorch.org/) in the currently active Python
+environment. Information on how to install PyTorch can be found on the website of the project.
+
+Additionally, the library nlopt must be installed somewhere on the system where setup.py can find it. On Linux
+distributions, this can for example be done with one of the following commands.
+
+```shell
+# Ubuntu or other Debian-based distributions
+sudo apt install libnlopt-cxx-dev
+# Arch Linux-based distributions (e.g., Arch, Manjaro)
+sudo pacman -S nlopt
+# Fedora
+sudo yum install -y NLopt
+```
+
+To download all submodules of this library, the following command can be used.
+
+```shell
+git submodule update --init
+```
+
+To finally install the library as a Python module, the following command must be called in the repository directory.
 
 ```sh
 python setup.py install
@@ -25,28 +40,4 @@ If it should be installed in a Conda environment, activate the corresponding env
 ```sh
 . "$HOME/miniconda3/etc/profile.d/conda.sh"
 conda activate <env-name>
-```
-
-
-## CUDA Detection
-
-If setup.py is not able to find your CUDA installation on Linux, add the following lines to the end of `$HOME/.profile`
-and log out of and then back into your user account.
-`cuda-11.5` needs to be adapted depending on the CUDA version installed.
-
-```sh
-export CPATH=/usr/local/cuda-11.5/targets/x86_64-linux/include:$CPATH
-export LD_LIBRARY_PATH=/usr/local/cuda-11.5/targets/x86_64-linux/lib:$LD_LIBRARY_PATH
-export PATH=/usr/local/cuda-11.5/bin:$PATH
-```
-
-
-## CMake Support
-
-This library can also be built with CMake if it should not be installed globally in a Python environment.
-In order for CMake to find your PyTorch/LibTorch installation, the following command can be used.
-If you are using a virtual environment with pip or Conda, you may need to first activate the environment.
-
-```sh
-cmake -DCMAKE_PREFIX_PATH="$(python3 -c 'import torch.utils; print(torch.utils.cmake_prefix_path)')" ..
 ```

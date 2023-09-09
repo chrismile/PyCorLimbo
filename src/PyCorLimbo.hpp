@@ -33,8 +33,6 @@
 #include <torch/types.h>
 #include <torch/extension.h>
 
-#include "CorrelationDefines.hpp"
-
 struct BayOptSettings {
     int xs = 0;
     int ys = 0;
@@ -51,18 +49,5 @@ void optimizeSingleThreaded(
 void optimizeMultiThreaded(
         BayOptSettings settings, torch::Tensor sampleTensor,
         std::function<void(torch::Tensor, torch::Tensor)> callback);
-
-torch::Tensor pearsonCorrelation(torch::Tensor referenceTensor, torch::Tensor queryTensor);
-torch::Tensor spearmanRankCorrelation(torch::Tensor referenceTensor, torch::Tensor queryTensor);
-torch::Tensor kendallRankCorrelation(torch::Tensor referenceTensor, torch::Tensor queryTensor);
-torch::Tensor mutualInformationBinned(
-        torch::Tensor referenceTensor, torch::Tensor queryTensor, int64_t numBins,
-        double referenceMin, double referenceMax, double queryMin, double queryMax);
-torch::Tensor mutualInformationKraskov(torch::Tensor referenceTensor, torch::Tensor queryTensor, int64_t k);
-
-// numBins (MI binned) and k (MI Kraskov) are zero when not needed by the correlation measure type.
-torch::Tensor computeCorrelationCpu(
-        torch::Tensor referenceTensor, torch::Tensor queryTensor, CorrelationMeasureType correlationMeasureType,
-        int numBins, int k, float referenceMin, float referenceMax, float queryMin, float queryMax);
 
 #endif //PYCORIANDER_PYCORIANDER_HPP
