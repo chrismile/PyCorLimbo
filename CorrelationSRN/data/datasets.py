@@ -50,8 +50,8 @@ def convert_point_to_coords(x, y, z, xs, ys, zs):
 #@jit(nopython=True)
 def convert_sample_locations(grid_locations: torch.Tensor, data_all, xs, ys, zs, es):
     num_samples = grid_locations.size()[0]
-    X = torch.empty((num_samples, es), dtype=torch.float, device='cpu')
-    Y = torch.empty((num_samples, es), dtype=torch.float, device='cpu')
+    data_ref = torch.empty((num_samples, es), dtype=torch.float, device='cpu')
+    data_query = torch.empty((num_samples, es), dtype=torch.float, device='cpu')
     Xc = torch.empty((num_samples, 3), dtype=torch.float, device='cpu')
     Yc = torch.empty((num_samples, 3), dtype=torch.float, device='cpu')
     for sample_idx in range(num_samples):
@@ -61,8 +61,8 @@ def convert_sample_locations(grid_locations: torch.Tensor, data_all, xs, ys, zs,
         xj = grid_locations[sample_idx, 3].item()
         yj = grid_locations[sample_idx, 4].item()
         zj = grid_locations[sample_idx, 5].item()
-        X[sample_idx, :] = torch.tensor(data_all[:, zi, yi, xi], dtype=torch.float, device='cpu')
-        Y[sample_idx, :] = torch.tensor(data_all[:, zj, yj, xj], dtype=torch.float, device='cpu')
+        data_ref[sample_idx, :] = torch.tensor(data_all[:, zi, yi, xi], dtype=torch.float, device='cpu')
+        data_query[sample_idx, :] = torch.tensor(data_all[:, zj, yj, xj], dtype=torch.float, device='cpu')
         #ci = convert_point_to_coords(xi, yi, zi, xs, ys, zs)
         #cj = convert_point_to_coords(xj, yj, zj, xs, ys, zs)
         #for i in range(3):
@@ -74,7 +74,7 @@ def convert_sample_locations(grid_locations: torch.Tensor, data_all, xs, ys, zs,
         Yc[sample_idx, 0] = 2.0 * float(xj) / float(xs - 1) - 1.0
         Yc[sample_idx, 1] = 2.0 * float(yj) / float(ys - 1) - 1.0
         Yc[sample_idx, 2] = 2.0 * float(zj) / float(zs - 1) - 1.0
-    return X, Y, Xc, Yc
+    return data_ref, data_query, Xc, Yc
 
 
 class CorrelationDataSet:
@@ -93,7 +93,7 @@ class CorrelationDataSet:
         self.settings.zs = self.zs
         self.settings.num_init_samples = num_init_points
         self.settings.num_iterations = num_bos_iterations
-        #settings.alpha = 0.5
+        self.settings.alpha = 0.5
         self.train_locations = torch.empty((batch_size, 6), dtype=torch.int32)
         valid_locations = np.argwhere(~np.isnan(self.data_all[:, :, :, :]).any(axis=0))
         valid_locations = np.flip(valid_locations, axis=1).copy()
@@ -106,12 +106,17 @@ class CorrelationDataSet:
             zs = self.zs
             es = self.es
             data_all = self.data_all
-            def sample_correlation_function(query, result):
-                num_samples = query.size()[0]
-                X, Y, Xc, Yc = convert_sample_locations(query, data_all, xs, ys, zs, es)
+            # maxarg_x f(x), f(x) = GT(x) or f(x) = abs(GT(x) - SRN(x))
+            def sample_correlation_function(x, result):
+                # x: int32, (num_samples, 6), ref and query concatenated
+                num_samples = x.size()[0]
+                # data_ref, data_query: float32, (num_samples, 1000)
+                # Xc, Yc: float32, (num_samples, 3), one entry \in [-1, 1]^3
+                # data_all: float32, (es, zs, ys, xs), e.g., (1000, 20, 352, 250)
+                data_ref, data_query, Xc, Yc = convert_sample_locations(x, data_all, xs, ys, zs, es)
                 Xc = Xc.to('cuda')
                 Yc = Yc.to('cuda')
-                values_gt = pycoriander.pearson_correlation(X, Y).cpu()
+                values_gt = pycoriander.pearson_correlation(data_ref, data_query).cpu()
                 with torch.no_grad():
                     values_srn = model(Xc, Yc).cpu()
                 for sample_idx in range(num_samples):
@@ -119,6 +124,8 @@ class CorrelationDataSet:
                         result[sample_idx] = 0.0
                     else:
                         result[sample_idx] = abs(values_gt[sample_idx] - values_srn[sample_idx]).item()
+                        # Alternative:
+                        #result[sample_idx] = abs(values_gt[sample_idx]).item()
 
             pycorlimbo.optimize_multi_threaded(
                 self.settings, self.train_locations, sample_correlation_function)
@@ -134,11 +141,11 @@ class CorrelationDataSet:
             self.train_locations[:, 0:3] = self.valid_locations[idx0[:]]
             self.train_locations[:, 3:6] = self.valid_locations[idx1[:]]
 
-        X, Y, Xc, Yc = convert_sample_locations(
+        data_ref, data_query, Xc, Yc = convert_sample_locations(
             self.train_locations, self.data_all, self.xs, self.ys, self.zs, self.es)
         Xc = Xc.to('cuda')
         Yc = Yc.to('cuda')
-        values_gt = pycoriander.pearson_correlation(X, Y)
+        values_gt = pycoriander.pearson_correlation(data_ref, data_query)
         values_gt = values_gt.to('cuda').reshape((self.batch_size, 1))
 
         return Xc, Yc, values_gt
