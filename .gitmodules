@@ -1,6 +1,6 @@
 [submodule "third_party/limbo"]
 	path = third_party/limbo
-	url = git@github.com:chrismile/limbo.git
+	url = https://github.com/chrismile/limbo.git
 [submodule "third_party/eigen"]
 	path = third_party/eigen
-	url = git@gitlab.com:libeigen/eigen.git
+	url = https://gitlab.com/libeigen/eigen.git
