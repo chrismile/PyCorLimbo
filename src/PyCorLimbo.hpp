@@ -49,5 +49,8 @@ void optimizeSingleThreaded(
 void optimizeMultiThreaded(
         BayOptSettings settings, torch::Tensor sampleTensor,
         std::function<void(torch::Tensor, torch::Tensor)> callback);
+void optimizeMultiThreadedBlocks(
+        BayOptSettings settings, torch::Tensor sampleTensor, int blockSize, torch::Tensor blockOffsets,
+        std::function<void(torch::Tensor, torch::Tensor)> callback);
 
 #endif //PYCORIANDER_PYCORIANDER_HPP

@@ -28,6 +28,7 @@
 
 #define USE_NLOPT
 #include <limbo/bayes_opt/boptimizer.hpp>
+#include <utility>
 #include <pybind11/functional.h>
 
 #include "PyCorLimbo.hpp"
@@ -48,6 +49,10 @@ PYBIND11_MODULE(pycorlimbo, m) {
     m.def("optimize_multi_threaded", optimizeMultiThreaded,
           "Applies Bayesian optimization (multi-threaded).",
           py::arg("settings"), py::arg("sample_tensor"), py::arg("callback"));
+    m.def("optimize_multi_threaded_blocks", optimizeMultiThreadedBlocks,
+          "Applies Bayesian optimization (multi-threaded).",
+          py::arg("settings"), py::arg("sample_tensor"), py::arg("block_size"), py::arg("block_offsets"),
+          py::arg("callback"));
 }
 
 namespace BayOpt {
@@ -102,6 +107,7 @@ inline int pr(double x){
 }
 
 struct Eval {
+    const int oxi, oyi, ozi, oxj, oyj, ozj;
     const int xs, ys, zs;
     const std::function<float(int, int, int, int, int, int)> f; //< Function to be optimized.
     mutable float bestValue = std::numeric_limits<float>::lowest();
@@ -111,12 +117,12 @@ struct Eval {
 
     // Convert continuous to discrete indices with probabilistic reparameterization.
     Eigen::VectorXd operator()(const Eigen::VectorXd& v) const {
-        int xi = pr(v[0] * (xs - 1));
-        int yi = pr(v[1] * (ys - 1));
-        int zi = pr(v[2] * (zs - 1));
-        int xj = pr(v[3] * (xs - 1));
-        int yj = pr(v[4] * (ys - 1));
-        int zj = pr(v[5] * (zs - 1));
+        int xi = oxi + pr(v[0] * (xs - 1));
+        int yi = oyi + pr(v[1] * (ys - 1));
+        int zi = ozi + pr(v[2] * (zs - 1));
+        int xj = oxj + pr(v[3] * (xs - 1));
+        int yj = oyj + pr(v[4] * (ys - 1));
+        int zj = ozj + pr(v[5] * (zs - 1));
         float value = f(xi, yi, zi, xj, yj, zj);
         if (std::isnan(value)) {
             std::cerr << "Error: NaN sample detected." << std::endl;
@@ -141,11 +147,11 @@ void optimizeSingleThreaded(
         BayOptSettings settings, torch::Tensor sampleTensor,
         std::function<float(int, int, int, int, int, int)> callback) {
     if (sampleTensor.sizes().size() != 2) {
-        throw std::runtime_error("Error in spearmanRankCorrelation: Sample tensor needs to have 2 dimensions.");
+        throw std::runtime_error("Error in optimizeMultiThreadedBlocks: Sample tensor needs to have 2 dimensions.");
     }
     auto numSamples = int(sampleTensor.size(0));
     if (sampleTensor.size(1) != 6) {
-        throw std::runtime_error("Error in spearmanRankCorrelation: Sample tensor dimension 1 needs to be 6.");
+        throw std::runtime_error("Error in optimizeMultiThreadedBlocks: Sample tensor dimension 1 needs to be 6.");
     }
     auto sampleAccessor = sampleTensor.accessor<int32_t, 2>();
 
@@ -158,7 +164,7 @@ void optimizeSingleThreaded(
         BayOpt::Params::init_randomsampling::set_samples(settings.num_init_samples);
         BayOpt::Params::opt_nloptnograd::set_iterations(settings.num_optimizer_iterations);
         BayOpt::Params::acqui_ucb::set_alpha(settings.alpha);
-        auto eval = BayOpt::Eval{xs, ys, zs, callback};
+        auto eval = BayOpt::Eval{0, 0, 0, 0, 0, 0, xs, ys, zs, callback};
         optimizer.optimize(eval);
         for (int d = 0; d < 6; d++) {
             sampleAccessor[sampleIdx][d] = eval.bestSample[d];
@@ -192,15 +198,26 @@ private:
     int waitingCounter;
 };
 
-void optimizeMultiThreaded(
-        BayOptSettings settings, torch::Tensor sampleTensor,
+#define CLAMP_BLOCK(offset, block, size) \
+    if (offset + block > size) { \
+        block = size - offset; \
+    }
+
+void optimizeMultiThreadedBlocks(
+        BayOptSettings settings, torch::Tensor sampleTensor, int blockSize, torch::Tensor blockOffsets,
         std::function<void(torch::Tensor, torch::Tensor)> callback) {
     if (sampleTensor.sizes().size() != 2) {
-        throw std::runtime_error("Error in spearmanRankCorrelation: Sample tensor needs to have 2 dimensions.");
+        throw std::runtime_error("Error in optimizeMultiThreadedBlocks: Sample tensor needs to have 2 dimensions.");
     }
     auto numSamples = int(sampleTensor.size(0));
     if (sampleTensor.size(1) != 6) {
-        throw std::runtime_error("Error in spearmanRankCorrelation: Sample tensor dimension 1 needs to be 6.");
+        throw std::runtime_error("Error in optimizeMultiThreadedBlocks: Sample tensor dimension 1 needs to be 6.");
+    }
+    if (blockSize > 0) {
+        if (blockOffsets.size(1) != 6) {
+            throw std::runtime_error(
+                    "Error in optimizeMultiThreadedBlocks: Block offset tensor dimension 1 needs to be 6.");
+        }
     }
     auto sampleAccessor = sampleTensor.accessor<int32_t, 2>();
 
@@ -246,7 +263,27 @@ void optimizeMultiThreaded(
             BayOpt::Params::init_randomsampling::set_samples(settings.num_init_samples);
             BayOpt::Params::opt_nloptnograd::set_iterations(settings.num_optimizer_iterations);
             BayOpt::Params::acqui_ucb::set_alpha(settings.alpha);
-            auto eval = BayOpt::Eval{xs, ys, zs, callbackThread};
+            int oxi = 0, oyi = 0, ozi = 0, oxj = 0, oyj = 0, ozj = 0;
+            int bxs = xs, bys = ys, bzs = zs;
+            if (blockSize > 0) {
+                bxs = blockSize;
+                bys = blockSize;
+                bzs = blockSize;
+                auto blockOffsetsAccessor = queryTensor.accessor<int32_t, 2>();
+                oxi = sampleAccessor[sampleIdx][0];
+                oyi = sampleAccessor[sampleIdx][1];
+                ozi = sampleAccessor[sampleIdx][2];
+                oxj = sampleAccessor[sampleIdx][3];
+                oyj = sampleAccessor[sampleIdx][4];
+                ozj = sampleAccessor[sampleIdx][5];
+                CLAMP_BLOCK(oxi, bxs, xs);
+                CLAMP_BLOCK(oyi, bys, ys);
+                CLAMP_BLOCK(ozi, bzs, zs);
+                CLAMP_BLOCK(oxj, bxs, xs);
+                CLAMP_BLOCK(oyj, bys, ys);
+                CLAMP_BLOCK(ozj, bzs, zs);
+            }
+            auto eval = BayOpt::Eval{oxi, oyi, ozi, oxj, oyj, ozj, bxs, bys, bzs, callbackThread};
             optimizer.optimize(eval);
             if (sampleIdx < numSamples) {
                 for (int d = 0; d < 6; d++) {
@@ -271,4 +308,10 @@ void optimizeMultiThreaded(
     for (auto& t : threads) {
         t.join();
     }
+}
+
+void optimizeMultiThreaded(
+        BayOptSettings settings, torch::Tensor sampleTensor,
+        std::function<void(torch::Tensor, torch::Tensor)> callback) {
+    optimizeMultiThreadedBlocks(settings, std::move(sampleTensor), 0, torch::Tensor{}, std::move(callback));
 }

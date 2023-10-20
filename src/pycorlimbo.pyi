@@ -27,3 +27,9 @@ def optimize_multi_threaded(settings: BayOptSettings, sample_tensor: torch.Tenso
     """
     Applies Bayesian optimization (multi-threaded).
     """
+def optimize_multi_threaded_blocks(
+        settings: BayOptSettings, sample_tensor: torch.Tensor, block_size: int, block_offsets: torch.Tensor,
+        callback: typing.Callable) -> None:
+    """
+    Applies Bayesian optimization (multi-threaded).
+    """
