@@ -108,7 +108,7 @@ inline int pr(double x){
 
 struct Eval {
     const int oxi, oyi, ozi, oxj, oyj, ozj;
-    const int xs, ys, zs;
+    const int xsi, ysi, zsi, xsj, ysj, zsj;
     const std::function<float(int, int, int, int, int, int)> f; //< Function to be optimized.
     mutable float bestValue = std::numeric_limits<float>::lowest();
     mutable std::array<int32_t, 6> bestSample;
@@ -117,12 +117,12 @@ struct Eval {
 
     // Convert continuous to discrete indices with probabilistic reparameterization.
     Eigen::VectorXd operator()(const Eigen::VectorXd& v) const {
-        int xi = oxi + pr(v[0] * (xs - 1));
-        int yi = oyi + pr(v[1] * (ys - 1));
-        int zi = ozi + pr(v[2] * (zs - 1));
-        int xj = oxj + pr(v[3] * (xs - 1));
-        int yj = oyj + pr(v[4] * (ys - 1));
-        int zj = ozj + pr(v[5] * (zs - 1));
+        int xi = oxi + pr(v[0] * (xsi - 1));
+        int yi = oyi + pr(v[1] * (ysi - 1));
+        int zi = ozi + pr(v[2] * (zsi - 1));
+        int xj = oxj + pr(v[3] * (xsj - 1));
+        int yj = oyj + pr(v[4] * (ysj - 1));
+        int zj = ozj + pr(v[5] * (zsj - 1));
         float value = f(xi, yi, zi, xj, yj, zj);
         if (std::isnan(value)) {
             std::cerr << "Error: NaN sample detected." << std::endl;
@@ -147,11 +147,11 @@ void optimizeSingleThreaded(
         BayOptSettings settings, torch::Tensor sampleTensor,
         std::function<float(int, int, int, int, int, int)> callback) {
     if (sampleTensor.sizes().size() != 2) {
-        throw std::runtime_error("Error in optimizeMultiThreadedBlocks: Sample tensor needs to have 2 dimensions.");
+        throw std::runtime_error("Error in optimizeSingleThreaded: Sample tensor needs to have 2 dimensions.");
     }
     auto numSamples = int(sampleTensor.size(0));
     if (sampleTensor.size(1) != 6) {
-        throw std::runtime_error("Error in optimizeMultiThreadedBlocks: Sample tensor dimension 1 needs to be 6.");
+        throw std::runtime_error("Error in optimizeSingleThreaded: Sample tensor dimension 1 needs to be 6.");
     }
     auto sampleAccessor = sampleTensor.accessor<int32_t, 2>();
 
@@ -164,7 +164,7 @@ void optimizeSingleThreaded(
         BayOpt::Params::init_randomsampling::set_samples(settings.num_init_samples);
         BayOpt::Params::opt_nloptnograd::set_iterations(settings.num_optimizer_iterations);
         BayOpt::Params::acqui_ucb::set_alpha(settings.alpha);
-        auto eval = BayOpt::Eval{0, 0, 0, 0, 0, 0, xs, ys, zs, callback};
+        auto eval = BayOpt::Eval{0, 0, 0, 0, 0, 0, xs, ys, zs, xs, ys, zs, callback};
         optimizer.optimize(eval);
         for (int d = 0; d < 6; d++) {
             sampleAccessor[sampleIdx][d] = eval.bestSample[d];
@@ -218,6 +218,10 @@ void optimizeMultiThreadedBlocks(
             throw std::runtime_error(
                     "Error in optimizeMultiThreadedBlocks: Block offset tensor dimension 1 needs to be 6.");
         }
+        if (blockOffsets.size(0) != sampleTensor.size(0)) {
+            throw std::runtime_error(
+                    "Error in optimizeMultiThreadedBlocks: Block offset tensor dimension 0 mismatch.");
+        }
     }
     auto sampleAccessor = sampleTensor.accessor<int32_t, 2>();
 
@@ -264,26 +268,35 @@ void optimizeMultiThreadedBlocks(
             BayOpt::Params::opt_nloptnograd::set_iterations(settings.num_optimizer_iterations);
             BayOpt::Params::acqui_ucb::set_alpha(settings.alpha);
             int oxi = 0, oyi = 0, ozi = 0, oxj = 0, oyj = 0, ozj = 0;
-            int bxs = xs, bys = ys, bzs = zs;
+            int xsi = xs, ysi = ys, zsi = zs, xsj = xs, ysj = ys, zsj = zs;
             if (blockSize > 0) {
-                bxs = blockSize;
-                bys = blockSize;
-                bzs = blockSize;
-                auto blockOffsetsAccessor = queryTensor.accessor<int32_t, 2>();
-                oxi = sampleAccessor[sampleIdx][0];
-                oyi = sampleAccessor[sampleIdx][1];
-                ozi = sampleAccessor[sampleIdx][2];
-                oxj = sampleAccessor[sampleIdx][3];
-                oyj = sampleAccessor[sampleIdx][4];
-                ozj = sampleAccessor[sampleIdx][5];
-                CLAMP_BLOCK(oxi, bxs, xs);
-                CLAMP_BLOCK(oyi, bys, ys);
-                CLAMP_BLOCK(ozi, bzs, zs);
-                CLAMP_BLOCK(oxj, bxs, xs);
-                CLAMP_BLOCK(oyj, bys, ys);
-                CLAMP_BLOCK(ozj, bzs, zs);
+                xsi = blockSize;
+                ysi = blockSize;
+                zsi = blockSize;
+                xsj = blockSize;
+                ysj = blockSize;
+                zsj = blockSize;
+                if (sampleIdx < numSamples) {
+                    auto blockOffsetsAccessor = blockOffsets.accessor<int32_t, 2>();
+                    oxi = blockOffsetsAccessor[sampleIdx][0];
+                    oyi = blockOffsetsAccessor[sampleIdx][1];
+                    ozi = blockOffsetsAccessor[sampleIdx][2];
+                    oxj = blockOffsetsAccessor[sampleIdx][3];
+                    oyj = blockOffsetsAccessor[sampleIdx][4];
+                    ozj = blockOffsetsAccessor[sampleIdx][5];
+                }
+                CLAMP_BLOCK(oxi, xsi, xs);
+                CLAMP_BLOCK(oyi, ysi, ys);
+                CLAMP_BLOCK(ozi, zsi, zs);
+                CLAMP_BLOCK(oxj, xsj, xs);
+                CLAMP_BLOCK(oyj, ysj, ys);
+                CLAMP_BLOCK(ozj, zsj, zs);
+                if (oxi < 0 || oyi < 0 || ozi < 0 || oxj < 0 || oyj < 0 || ozj < 0
+                        || oxi >= xs || oyi >= ys || ozi >= zs || oxj >= xs || oyj >= ys || ozj >= zs) {
+                    throw std::runtime_error("Error in optimizeMultiThreadedBlocks: Invalid offset detected.");
+                }
             }
-            auto eval = BayOpt::Eval{oxi, oyi, ozi, oxj, oyj, ozj, bxs, bys, bzs, callbackThread};
+            auto eval = BayOpt::Eval{oxi, oyi, ozi, oxj, oyj, ozj, xsi, ysi, zsi, xsj, ysj, zsj, callbackThread};
             optimizer.optimize(eval);
             if (sampleIdx < numSamples) {
                 for (int d = 0; d < 6; d++) {

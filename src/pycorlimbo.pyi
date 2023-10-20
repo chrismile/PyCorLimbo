@@ -5,7 +5,8 @@ import typing
 
 __all__ = [
     "optimize_single_threaded",
-    "optimize_multi_threaded"
+    "optimize_multi_threaded",
+    "optimize_multi_threaded_blocks"
 ]
 
 
