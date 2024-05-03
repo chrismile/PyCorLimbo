@@ -229,7 +229,7 @@ void optimizeMultiThreadedBlocks(
     int ys = settings.ys;
     int zs = settings.zs;
 
-    auto numThreads = int(std::thread::hardware_concurrency());
+    auto numThreads = std::min(int(std::thread::hardware_concurrency()), numSamples);
     std::vector<std::thread> threads(numThreads);
     torch::Tensor queryTensor = torch::zeros({int(threads.size()), 6}, torch::TensorOptions().dtype(torch::kInt32));
     auto queryAccessor = queryTensor.accessor<int32_t, 2>();
